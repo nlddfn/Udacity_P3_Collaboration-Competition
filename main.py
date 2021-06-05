@@ -14,7 +14,7 @@ TRAIN = False
 # env_path = "/data/Tennis_Linux_NoVis/Tennis.x86_64"
 local_path = os.path.dirname(os.path.abspath(__file__))
 local_env_path = local_path + "/Tennis.app"
-checkpoint_pth = local_path + "/checkpoint_{}_e3200_r077.pth"
+checkpoint_pth = local_path + "/scores/checkpoint_env_solved_{}_PER.pth"
 # checkpoint_pth = local_path + "/checkpoint_{}.pth"
 
 # Load Env
@@ -61,6 +61,7 @@ config = {
     "tau": 1e-3,  # soft update
     "weight_decay": 0,  # l2 weight decay
     "net_body": (256, 128, 64),  # hidden layers
+    "prioritized": True,
     "per_alpha": 0.6,
     "per_beta": 0.4,
     "per_beta_increment": 0.0001,

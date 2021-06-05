@@ -119,3 +119,5 @@ def evaluate_agent(
 
     if np.mean(score_lst) < min_score:
         print(f"Environment not solved: Expected score >= {min_score}, found {np.mean(score_lst)}")
+    else:
+        print(f"Validation complete: Expected score >= {min_score}, found {np.mean(score_lst)}")
