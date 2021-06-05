@@ -61,6 +61,10 @@ config = {
     "tau": 1e-3,  # soft update
     "weight_decay": 0,  # l2 weight decay
     "net_body": (256, 128, 64),  # hidden layers
+    "per_alpha": 0.6,
+    "per_beta": 0.4,
+    "per_beta_increment": 0.0001,
+    "per_epsilon": 0.0001,
 }
 
 agent = Agent(
@@ -72,7 +76,7 @@ agent = Agent(
 )
 
 if TRAIN:
-    n_episodes = 2000
+    n_episodes = 2600
     print(f"Train Agent for {n_episodes} episodes")
     scores = train_agent(agent, env, n_episodes=n_episodes, min_score=.5, num_agents=num_agents)
     time_elapsed = datetime.now() - start_time
