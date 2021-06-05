@@ -97,17 +97,21 @@ def execute_policy(env, agent, num_agents, step):
 def evaluate_agent(
     agent, env, num_agents, checkpoint_pth="{}", num_episodes=1000, min_score=30
 ):
+    if torch.cuda.is_available():
+        map_location = lambda storage, loc: storage.cuda()
+    else:
+        map_location = 'cpu'
     score_lst = []
     agent.actor_local.load_state_dict(
         torch.load(
             checkpoint_pth.format("actor"),
-            map_location=torch.device('cpu')
+            map_location=map_location
         ),
     )
     agent.critic_local.load_state_dict(
         torch.load(
             checkpoint_pth.format("critic"),
-            map_location=torch.device('cpu')
+            map_location=map_location
         ),
     )
     for i in range(num_episodes):
@@ -115,3 +119,5 @@ def evaluate_agent(
 
     if np.mean(score_lst) < min_score:
         print(f"Environment not solved: Expected score >= {min_score}, found {np.mean(score_lst)}")
+    else:
+        print(f"Validation complete: Expected score >= {min_score}, found {np.mean(score_lst)}")

@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 from model import Actor, Critic
-from utils import OrnsteinUhlenbeckProcess, ReplayBuffer
+from utils import OrnsteinUhlenbeckProcess, PEReplayBuffer, ReplayBuffer
 
 
 BUFFER_SIZE = int(1e6)  # replay buffer size
@@ -18,6 +18,11 @@ UPDATE_EVERY = 4  # how often to update the network
 TAU = 1e-3  # soft update
 WEIGHT_DECAY = 0  # L2 weight decay
 NET_BODY = (256, 128)  # hidden layers
+PRIORITIZED = False
+PER_ALPHA = 0
+PER_BETA = 0
+PER_BETA_INCREMENT = 1e-4
+PER_EPSILON = 1e-4
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -41,6 +46,11 @@ class Agent:
         lr_critic=LR_CRITIC,
         weight_decay=WEIGHT_DECAY,
         tau=TAU,
+        prioritized=PRIORITIZED,
+        per_alpha=PER_ALPHA,
+        per_beta=PER_BETA,
+        per_beta_increment=PER_BETA_INCREMENT,
+        per_epsilon=PER_EPSILON,
     ):
         """Initialize an Agent object.
 
@@ -59,6 +69,7 @@ class Agent:
         self.update_every = update_every
         self.tau = tau
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.prioritized = prioritized
 
         fc1_units, fc2_units, fc3_units = net_body
         # Actor Network (w/ Target Network)
@@ -85,13 +96,23 @@ class Agent:
         self.noise = OrnsteinUhlenbeckProcess((num_agents, action_size), random_seed)
 
         # Replay memory
-        self.memory = ReplayBuffer(
-            action_size=action_size,
-            buffer_size=buffer_size,
-            batch_size=batch_size,
-            seed=random_seed,
-            device=self.device,
-        )
+        if self.prioritized:
+            self.memory = PEReplayBuffer(
+                buffer_size=buffer_size,
+                batch_size=batch_size,
+                device=self.device,
+                alpha=per_alpha,
+                beta=per_beta,
+                beta_increment=per_beta_increment,
+                epsilon=per_epsilon
+            )
+        else:
+            self.memory = ReplayBuffer(
+                buffer_size=buffer_size,
+                batch_size=batch_size,
+                device=self.device,
+                seed=0,
+            )
 
     def step(self, states, actions, rewards, next_states, dones, step):
         """Save experience in replay memory, and use random sample from buffer to learn."""
@@ -99,12 +120,45 @@ class Agent:
         for state, action, reward, next_state, done in zip(
             states, actions, rewards, next_states, dones
         ):
-            self.memory.add(state, action, reward, next_state, done)
+            if self.prioritized:
+                # self.append_sample(state, action, reward, next_state, done)
+                self.memory.add(1, (state, action, reward, next_state, done))
+            else:
+                self.memory.add(state, action, reward, next_state, done)
 
         # Learn every UPDATE_EVERY time steps after reaching the minimal sample size.
-        if (len(self.memory) > self.replay_initial) and (step % self.update_every == 0):
+        if (self.memory.tree.n_entries > self.replay_initial) and (step % self.update_every == 0):
             experiences = self.memory.sample()
             self.update(experiences, self.gamma)
+
+    def append_sample(self, state, action, reward, next_state, done):
+        """Save sample (error,<s,a,r,s'>) to the replay memory"""
+
+        # Set network to eval mode
+        self.actor_target.eval()
+        self.critic_target.eval()
+        self.critic_local.eval()
+
+        state = torch.from_numpy(state).float().to(self.device)
+        next_state = torch.from_numpy(next_state).float().to(self.device)
+        action = torch.from_numpy(action).float().to(self.device)
+
+        with torch.no_grad():
+            # Get predicted Q values (for next state) from target model
+            next_action = self.actor_target.forward(next_state)
+            Q_targets_next = self.critic_target.forward(next_state, next_action)
+            Q_targets = reward + (self.gamma * Q_targets_next * (1 - done))
+            # Get expected Q values from critic model
+            Q_expected = self.critic_local.forward(state, action)
+
+        error = (Q_targets - Q_expected).pow(2).data.cpu().numpy()
+
+        # Set network to train mode
+        self.actor_target.train()
+        self.critic_target.train()
+        self.critic_local.train()
+
+        self.memory.add(error, (state, action, reward, next_state, done))
 
     def act(self, state, add_noise=True):
         """Returns actions for given state as per current policy."""
@@ -136,17 +190,23 @@ class Agent:
             experiences (Tuple[torch.Tensor]): tuple of (s, a, r, s', done) tuples
             gamma (float): discount factor
         """
-        states, actions, rewards, next_states, dones = experiences
+        (states, actions, rewards, next_states, dones), idxs, is_weight = experiences
 
         # Update Critic
         # Get expected Q values from critic model
-        curr_Q = self.critic_local.forward(states, actions)
+        Q_expected = self.critic_local.forward(states, actions)
         # Get predicted Q values (for next states) from target model
         next_actions = self.actor_target.forward(next_states)
         next_Q = self.critic_target.forward(next_states, next_actions)
-        expected_Q = rewards + (self.gamma * next_Q * (1 - dones))
+        Q_target = rewards + (self.gamma * next_Q * (1 - dones))
+
+        if self.prioritized:
+            # Update priorities in ReplayBuffer
+            loss = (Q_expected - Q_target).pow(2).data.cpu().numpy()
+            self.memory.update(idxs, loss.reshape(is_weight.shape) * is_weight)
+
         # Compute critic loss
-        critic_loss = F.mse_loss(curr_Q, expected_Q)
+        critic_loss = F.mse_loss(Q_expected, Q_target)
 
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
@@ -176,9 +236,5 @@ class Agent:
             target_model: PyTorch model (weights will be copied to)
             tau (float): interpolation parameter
         """
-        for target_param, local_param in zip(
-            target_model.parameters(), local_model.parameters()
-        ):
-            target_param.data.copy_(
-                tau * local_param.data + (1.0 - tau) * target_param.data
-            )
+        for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
+            target_param.data.copy_(tau * local_param.data + (1.0 - tau) * target_param.data)
