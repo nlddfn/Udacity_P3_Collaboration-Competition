@@ -8,7 +8,7 @@ The project implements [Deep Deterministic Policy Gradient](https://arxiv.org/ab
 ## Methodology
 First of all, it is important to notice that the environment rewards the agents for keeping the ball bouncing rather than winning a game. This means the two trained agents should collaborate, rather than compete. Secondly, each agents receives local coordinates making the environment and the two agents completely symmetrical with respect to the y axis (or the "net", where x=0).
 
-With these premises, I trained a DDPG model where both agents share the same experience (implemented as a [prioritised experience replay](https://cardwing.github.io/files/RL_course_report.pdf)) in analogy with the previous [project](https://github.com/nlddfn/Udacity_RL_P2_CControl). Unlike the MADPG, only one actor and one critic are used for both agents.
+With these premises, I trained a DDPG model where both agents share the same experience (implemented as a [prioritized experience replay](https://cardwing.github.io/files/RL_course_report.pdf)) in analogy with the previous [project](https://github.com/nlddfn/Udacity_RL_P2_CControl). Unlike the MADPG, only one actor and one critic are used for both agents.
 
 During the first experiments, I managed to solve the environment with only 1100 episodes and a simple buffer. While exciting, I was not able to validate the minimum requirement (score > 0.5). The average reward over 10 episodes was <= 0.3. I therefore introduced PER to improve model stability. The new model was able to validate successfully with average score = 0.83.
 
